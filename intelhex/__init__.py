@@ -101,7 +101,7 @@ class IntelHex(object):
             else:
                 raise ValueError("source: bad initializer type")
 
-    def _decode_record(self, s, line=0):
+    def _decode_record(self, s, line=0, overlap="error"):
         '''Decode one record of HEX file.
 
         @param  s       line with HEX record.
@@ -109,6 +109,8 @@ class IntelHex(object):
 
         @raise  EndOfFile   if EOF record encountered.
         '''
+        assert(overlap in ["error","replace","ignore"])
+
         s = s.rstrip('\r\n')
         if not s:
             return          # empty line
@@ -144,9 +146,14 @@ class IntelHex(object):
             # data record
             addr += self._offset
             for i in range_g(4, 4+record_length):
+                replace = True
                 if not self._buf.get(addr, None) is None:
-                    raise AddressOverlapError(address=addr, line=line)
-                self._buf[addr] = bin[i]
+                    if overlap == "error":
+                        raise AddressOverlapError(address=addr, line=line)
+                    if overlap == "ignore":
+                        replace = False
+                if replace:
+                    self._buf[addr] = bin[i]
                 addr += 1   # FIXME: addr should be wrapped 
                             # BUT after 02 record (at 64K boundary)
                             # and after 04 record (at 4G boundary)
@@ -191,13 +198,15 @@ class IntelHex(object):
                                        bin[7]),
                               }
 
-    def loadhex(self, fobj):
+    def loadhex(self, fobj, overlap='error'):
         """Load hex file into internal buffer. This is not necessary
         if object was initialized with source set. This will overwrite
         addresses if object was already initialized.
 
         @param  fobj        file name or file-like object
         """
+        assert(overlap in ["error","replace","ignore"])
+
         if getattr(fobj, "read", None) is None:
             fobj = open(fobj, "r")
             fclose = fobj.close
@@ -212,7 +221,7 @@ class IntelHex(object):
             try:
                 for s in fobj:
                     line += 1
-                    decode(s, line)
+                    decode(s, line, overlap=overlap)
             except _EndOfFile:
                 pass
         finally:
@@ -849,24 +858,6 @@ class IntelHex(object):
                         'Starting addresses are different')
                 elif overlap == 'replace':
                     self.start_addr = other.start_addr
-
-    def segments(self):
-        """Return a list of ordered tuple objects, representing contiguous occupied data addresses.
-        Each tuple has a length of two and follows the semantics of the range and xrange objects.
-        The second entry of the tuple is always an integer greater than the first entry.
-        """
-        addresses = self.addresses()
-        if not addresses:
-            return []
-        elif len(addresses) == 1:
-            return([(addresses[0], addresses[0]+1)])
-        adjacent_differences = [(b - a) for (a, b) in zip(addresses[:-1], addresses[1:])]
-        breaks = [i for (i, x) in enumerate(adjacent_differences) if x > 1]
-        endings = [addresses[b] for b in breaks]
-        endings.append(addresses[-1])
-        beginings = [addresses[b+1] for b in breaks]
-        beginings.insert(0, addresses[0])
-        return [(a, b+1) for (a, b) in zip(beginings, endings)]
 #/IntelHex
 
 
@@ -1081,6 +1072,7 @@ def diff_dumps(ih1, ih2, tofile=None, name1="a", name2="b", n_context=3):
         tofile = sys.stdout
     output = '\n'.join(result)+'\n'
     tofile.write(output)
+    return result
 
 
 class Record(object):
